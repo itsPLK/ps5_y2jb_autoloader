@@ -97,7 +97,7 @@ const offset_8_00_to_8_60 = {
     PMAP_STORE_DMPDPI: null,
 };
 
-const offset_9_00_to_9_05 = {
+const offset_9_00 = {
     DATA_BASE: 0xCA0000n,
     DATA_SIZE: null,
     DATA_BASE_DYNAMIC: 0x10000n,
@@ -113,7 +113,7 @@ const offset_9_00_to_9_05 = {
     PMAP_STORE_DMPDPI: null,
 };
 
-const offset_9_20_to_9_60 = {
+const offset_9_05_to_9_60 = {
     DATA_BASE: 0xCA0000n,
     DATA_SIZE: null,
     DATA_BASE_DYNAMIC: 0x10000n,
@@ -169,11 +169,11 @@ const ps5_kernel_offset_list = {
     "8.20": offset_8_00_to_8_60,
     "8.40": offset_8_00_to_8_60,
     "8.60": offset_8_00_to_8_60,
-    "9.00": offset_9_00_to_9_05,
-    "9.05": offset_9_00_to_9_05,
-    "9.20": offset_9_20_to_9_60,
-    "9.40": offset_9_20_to_9_60,
-    "9.60": offset_9_20_to_9_60,
+    "9.00": offset_9_00,
+    "9.05": offset_9_05_to_9_60,
+    "9.20": offset_9_05_to_9_60,
+    "9.40": offset_9_05_to_9_60,
+    "9.60": offset_9_05_to_9_60,
     "10.00": offset_10_00_to_10_01,
     "10.01": offset_10_00_to_10_01,
 };
