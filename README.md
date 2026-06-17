@@ -103,6 +103,14 @@ etaHEN.elf
 ```
 </Details>
 
+<Details>
+<Summary><i>I added the wrong .elf to the autoloader and now my console crashes when I launch y2jb. How can I fix it?</i></Summary>
+
+Take a USB drive formatted as FAT32 or exFAT, create a directory called "ps5_autoloader" in the root of the drive, and place elfldr.elf, ftpsrv-ps5, or any other payload you prefer inside it.
+Then create the file autoload.txt in the same directory and write the name of the .elf file.
+Connect the USB drive to the console and launch y2jb. It will load only the payload from the USB drive, allowing you to FTP into the console or load another ELF to fix the problem.
+</Details>
+
 ## Credits
 
 * **[Gezine](https://github.com/Gezine)** - creator of the original [Y2JB](https://github.com/Gezine/Y2JB)
