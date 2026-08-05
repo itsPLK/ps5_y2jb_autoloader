@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.9.1
+- Updated [elfldr](https://github.com/itsPLK/ps5-elfldr) to v0.24
+- Updated [unified-autoloader](https://github.com/itsPLK/ps5-unified-autoloader) to v0.1.3
+  - includes bundled [Payload Manager](https://github.com/itsPLK/ps5-payload-manager) v0.5.1 (previously v0.3.1)
+- Added support for YouTube 01.009.253 (min fw 13.40) to the Y2JB userland exploit (thanks [@Gezine](https://github.com/Gezine))
+  - *Note: This is just for the future; a >12.70 kernel exploit is still needed*
+
+
 ## v0.9
 
 - **Unified Autoloader**: Autoload config parsing logic has been moved into [ps5-unified-autoloader](https://github.com/itsPLK/ps5-unified-autoloader) — a shared ELF used across all autoloaders (Y2JB, BD-JB, Lua). This keeps the codebase consistent and makes improvements available to all of them at once.
