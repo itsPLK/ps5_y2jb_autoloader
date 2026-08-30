@@ -2164,50 +2164,27 @@ async function start_p2jb() {
             }
             try {
 
-                const is_y2jb_14 = (typeof TITLE_ID === "string" && TITLE_ID.length > 0);
-                let elf_path = null, elf_source = null;
-                if (is_y2jb_14) {
-                    const ELFLDR_NAMES_SBX = ["elfldr_1320_v5.elf"];
-                    const SANDBOX_BASE = "/download0/cache/splash_screen/" +
-                        "aHR0cHM6Ly93d3cueW91dHViZS5jb20vdHY=/";
-                    const title_id = resolve_title_id();
-                    outer:
-                    for (const slot of ["000", "001", "002"]) {
-                        for (const name of ELFLDR_NAMES_SBX) {
-                            const p = "/mnt/sandbox/" + title_id + "_" + slot +
-                                SANDBOX_BASE + name;
-                            if (file_exists(p)) {
-                                elf_path = p; elf_source = "sandbox"; break outer;
-                            }
-                        }
-                    }
-                    if (!elf_path) {
-                        await ulog("stage_elfldr: elfldr_1320_v5.elf not in any " +
-                            "Y2JB 1.4 sandbox slot - skipped");
-                        send_notification("Stage 7\nelfldr not in sandbox\n" +
-                            "(jailbreak still complete)");
-                        return;
-                    }
-                } else {
-                    const ELFLDR_NAMES_USB = ["elfldr_1320_v5.elf",
-                        "elfldr_1320.elf", "elfldr.elf"];
-                    for (let u = 0; u < 8 && !elf_path; u++) {
-                        for (const name of ELFLDR_NAMES_USB) {
-                            const p = "/mnt/usb" + u + "/" + name;
-                            if (file_exists(p)) {
-                                elf_path = p; elf_source = "usb"; break;
-                            }
-                        }
-                    }
-                    if (!elf_path) {
-                        await ulog("stage_elfldr: elfldr not found on /mnt/usb0..7 " +
-                            "(Y2JB 1.3 requires USB delivery) - skipped");
-                        send_notification("Stage 7\nelfldr not on USB\n" +
-                            "(put elfldr_1320.elf on USB and retry)");
-                        return;
+                const ELFLDR_NAME = "@@ELFLDR_FILE@@";
+                const SANDBOX_BASE = "/download0/cache/splash_screen/" +
+                    "aHR0cHM6Ly93d3cueW91dHViZS5jb20vdHY=/";
+                const title_id = resolve_title_id();
+                let elf_path = null;
+                outer:
+                for (const slot of ["000", "001", "002"]) {
+                    const p = "/mnt/sandbox/" + title_id + "_" + slot +
+                        SANDBOX_BASE + ELFLDR_NAME;
+                    if (file_exists(p)) {
+                        elf_path = p; break outer;
                     }
                 }
-                await ulog("stage_elfldr: found (" + elf_source + ") " + elf_path);
+                if (!elf_path) {
+                    await ulog("stage_elfldr: " + ELFLDR_NAME + " not in any " +
+                        "sandbox slot - skipped");
+                    send_notification("Stage 7\nelfldr not in sandbox\n" +
+                        "(jailbreak still complete)");
+                    return;
+                }
+                await ulog("stage_elfldr: found (sandbox) " + elf_path);
 
                 ipv6_kernel_rw.init(S.fd_ofiles, S.kread64, S.kwrite64);
                 kernel.addr.data_base = S.data_base;
